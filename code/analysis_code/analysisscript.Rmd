@@ -1,0 +1,225 @@
+---
+title: "Analysis Script"
+author: "Sophia Drewry"
+date: "10/15/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script loads the cleaned and processed data to perform some formal statistical fitting
+```{r}
+# load needed packages. make sure they are installed.
+library(dplyr) #for data processing
+library(here) #to set paths
+library(tidymodels) #to fit models
+library(dotwhisker) #for box and ehiskers plots
+library(ggplot2)
+```
+#Load data
+```{r}
+# note the use of the here() package and not absolute paths
+dataSPOT <- here::here("data","processed_data","processeddta.rds")
+dataSPOT2 <- here::here("data","processed_data","feverdta.rds")
+# load data. 
+# note. processeddta is our main cleaned fata set. Fever data is just those who have fever, 
+processeddta <-readRDS(dataSPOT)
+feverdta <-readRDS(dataSPOT2)
+# take a look at the main data
+dplyr::glimpse(processeddta)
+```
+### End goal: 
+- Main continuous outcome of interest = Body temperature
+- Main categorical outcome = Nausea
+- Main predictor of interest = Runny Nose
+- We want to see if the other symptoms are correlated with (predict) those outcomes we looked at in the EDA.
+The other predictors of interest are as follows:
+- Fatigue (y/n)
+- CoughIntensity (none/mild/moderate/severe)
+- ChillsSweats (y/n)
+- SwollenLymphNodes (y/n)
+- Pharyngitis (y/n)
+- Insomnia (y/n)
+- Headache (y/n)
+- SubjectiveFever (y/n)
+
+# Model 1. Fitting a linear model to BodyTemp using RunnyNose the main predictor of interest
+```{r}
+# Using the tidymodels package, I am going to set up the linear model
+# Set the engine
+lm_mod <-  linear_reg() %>% 
+  set_engine("lm") 
+# Now I am fitting the model
+lm_fit <- 
+  lm_mod %>% 
+  fit(BodyTemp ~ RunnyNose, data = processeddta)
+tidy(lm_fit)
+```
+### Model as box and whiskers plot
+```{r}
+tidy(lm_fit) %>% 
+dwplot(dot_args = list(size = 2, color = "black"),
+         whisker_args = list(color = "black"),
+         vline = geom_vline(xintercept = 0, colour = "grey50", linetype = 2))
+
+```
+# Model 2. Fitting a linear model to BodyTemp using all relevant predictors of interest
+If we remember from our EDA, the other interesting predictors were
+
+- CoughIntensity (none/mild/moderate/severe)
+- ChillsSweats (y/n)
+- SubjectiveFever (y/n)
+
+*Note, I am not using Pharyngitis because if did not offer an interesting relationship in both body temperature variable alone as well as fever variable.
+```{r}
+# Using the tidymodels package, I am going to set up the linear model
+# Set the engine
+lm_mod <-  linear_reg() %>% 
+  set_engine("lm") 
+# Now I am fitting the model
+lm_fit2 <- 
+  lm_mod %>% 
+  fit(BodyTemp ~ RunnyNose * ChillsSweats * CoughIntensity * SubjectiveFever, data = processeddta)
+tidy(lm_fit2)
+
+```
+### Model as box and whiskers plot
+```{r}
+tidy(lm_fit2) %>% 
+dwplot(dot_args = list(size = 2, color = "black"),
+         whisker_args = list(color = "black"),
+         vline = geom_vline(xintercept = 0, colour = "grey50", linetype = 2))
+
+```
+
+# Comparing Model 1 and Model 2
+To best compare these models and see if they are significant, lets use an ANOVA table
+```{r}
+tidy(lm_fit)
+tidy(lm_fit2)
+
+ANOVA1<- anova(lm_fit$fit, lm_fit2$fit, test = "Chisq")
+ANOVA1
+
+```
+P value is significant, on the more complex model. p<0.001
+
+# Predicting fever temps using two different datasets
+### Create model 2.2 with fever data set
+```{r}
+# First lets create a model with feverdta
+lm_mod <-  linear_reg() %>% 
+  set_engine("lm") 
+# Now I am fitting the model
+lm_fit2.2 <- 
+  lm_mod %>% 
+  fit(BodyTemp ~ RunnyNose * ChillsSweats * CoughIntensity * SubjectiveFever, data = feverdta)
+tidy(lm_fit2.2)
+```
+### Setting Predictions 
+```{r}
+# Setting what we want to predict, a fever
+new_points <- expand.grid(BodyTemp = 100.4,
+                          CoughIntensity = c("None","Mild", "Moderate", "Severe"))
+new_points
+```
+### Set prediction for model 2
+```{r}
+
+mean_pred <- predict(lm_fit2$fit, new_data = new_points)
+#Set Confidence Interval
+confint <- predict(lm_fit2$fit, 
+                         new_data = new_points,
+                         interval = 'confidence')
+head(confint)
+tail(confint)
+
+#For some reason I am unable to bind mean_pred to confint for plotting and futher comparison
+# So I am trowing in the towel on this one, but comparing outputs are interesting
+
+```
+### Set prediction for model 2.2
+```{r}
+mean_pred2 <- predict(lm_fit2.2$fit, new_data = new_points)
+#Set Confidence Interval
+confint2 <- predict(lm_fit2.2$fit, 
+                         new_data = new_points,
+                        interval = 'confidence')
+head(confint2)
+tail(confint2)
+```
+# Model 3. Fitting a logistic model to Nausea using RunnyNose the main predictor of interest
+```{r}
+# Using the tidymodels package, I am going to set up the logistic model
+# Set the engine
+lm_mod1 <-  logistic_reg() %>% 
+  set_engine("glm") 
+# Now I am fitting the model
+lm_fit3 <- 
+  lm_mod1 %>% 
+  fit(Nausea ~ RunnyNose, data = processeddta)
+tidy(lm_fit3)
+```
+### Model as box and whiskers plot
+```{r}
+tidy(lm_fit3) %>% 
+dwplot(dot_args = list(size = 2, color = "black"),
+         whisker_args = list(color = "black"),
+         vline = geom_vline(xintercept = 0, colour = "grey50", linetype = 2))
+
+```
+
+# Model 4. Fitting a logistic model to Nausea using all relevant predictors of interest + runnynose
+If we remember from our EDA, the interesting predictors were
+
+- Fatigue
+- ChillsSweats (y/n)
+- SubjectiveFever (y/n)
+- Pharyngitis
+
+```{r}
+# Using the tidymodels package, I am going to set up the linear model
+# Set the engine
+lm_mod1 <-  logistic_reg() %>% 
+  set_engine("glm") 
+# Now I am fitting the model
+lm_fit4 <- 
+  lm_mod1 %>% 
+  fit(Nausea ~ RunnyNose * ChillsSweats * Fatigue * SubjectiveFever* Pharyngitis, data = processeddta)
+tidy(lm_fit4)
+
+```
+### Model as box and whiskers plot
+```{r}
+tidy(lm_fit4) %>% 
+dwplot(dot_args = list(size = 2, color = "black"),
+         whisker_args = list(color = "black"),
+         vline = geom_vline(xintercept = 0, colour = "grey50", linetype = 2))
+
+```
+
+# Comparing Model 3 and Model 4
+To best compare these models and see if they are significant, lets use an ANOVA table
+```{r}
+tidy(lm_fit3)
+tidy(lm_fit4)
+
+ANOVA2<-anova(lm_fit$fit, lm_fit2$fit, test = "Chisq")
+ANOVA2
+
+```
+
+P value is significant, on the more complex model. p<0.001
+
+
+
+
+
+
+
+
+
+
+

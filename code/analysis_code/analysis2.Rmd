@@ -1,0 +1,183 @@
+---
+title: 'Analysis #2'
+author: "Sophia Drewry"
+date: "10/19/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script loads the cleaned and processed data to perform some formal statistical fitting
+```{r}
+# load needed packages. make sure they are installed.
+library(dplyr) #for data processing
+library(here) #to set paths
+library(tidymodels) #to fit models
+```
+#Load data
+```{r}
+# note the use of the here() package and not absolute paths
+dataSPOT <- here::here("data","processed_data","processeddta.rds")
+# load data. 
+processeddta <-readRDS(dataSPOT)
+# take a look at the main data
+dplyr::glimpse(processeddta)
+```
+# Data splitting
+Here we are going to split the data randomly into training and testing subsets
+- Training data will be used to fit the model. 
+- Testing set will be used to evaluate the model.
+```{r}
+# Setting a seed for random number generation so if this analysis is reproduced, the same random set will be generated
+set.seed(42) # the answer to life
+# Subsetting 3/4 of data for the 2 categories
+data_split <- initial_split(processeddta, prop = 3/4)
+# Creating training data
+train_data <- training(data_split)
+# Creating testing data
+test_data  <- testing(data_split)
+```
+# Creating a recipe: Nusea
+In this section we are going to create a simple recipe that fits our categorical outcome of interest to all predictors
+Since the outcome is categorical(nausea), we are going to use a logistic regression
+```{r}
+nausea.rec<- recipe(Nausea ~ ., data = train_data) #Using training data
+summary(nausea.rec)
+```
+# Model 1. Fitting a logistic model to Nausea using all predictors of interest
+```{r}
+# Using the tidymodels package, I am going to set up the logistic model
+# Set the engine
+lr.mod <-  logistic_reg() %>% 
+  set_engine("glm") 
+```
+## Setting workflow
+In this section we are going to create a simple recipe that fits our categorical outcome of interest to all predictors
+```{r}
+nausea.wflow <- 
+  workflow() %>% 
+  add_model(lr.mod) %>% 
+  add_recipe(nausea.rec)
+nausea.wflow
+# Not sure why there are 0 steps
+```
+## Train the model using the workflow
+```{r}
+nausea.fit <- 
+  nausea.wflow %>% 
+  fit(data = train_data)
+nausea.fit
+
+# To view a tibble 
+nausea.fit %>%
+  extract_fit_parsnip() %>%
+  tidy()
+# I know we are trying to unlearn our reliance on pvals, but I cant help but notice all are greater than 0.05
+```
+# Model 1 evaluation
+Here we are going to look at the predictions, ROC and ROC-AUC for our data using the predict() function
+```{r}
+# applying recipe to test data
+predict(nausea.fit, test_data)
+# This is just giving us the nausea status, but we want to look at the predictors individually
+# So we are going to "augment" the test data function to show the predictors individually
+nausea.aug <- 
+  augment(nausea.fit, test_data)
+# Lets look at the output now ???
+nausea.aug %>%
+  select(Nausea, .pred_class, .pred_Yes, .pred_No) 
+# Choosing pred.Yes because I want to know how well it predicts a nausea event
+```
+
+## Creating an ROC curve for Nausea event 
+```{r}
+nausea.aug %>% 
+  roc_curve(truth = Nausea, .pred_Yes) %>% 
+  autoplot() #Not the best curve, lets get some numbers for it
+# Using roc_auc to look at the area under the curve
+nausea.aug %>% 
+  roc_auc(truth = Nausea, .pred_Yes)
+# Since the estimate (0.2304719) is > 0.5, it appears this model is not what we want
+```
+
+# Creating an ROC curve for non-Nausea event 
+```{r}
+# Lets see how well the model can predict NOT having a nausea event (I may not be interpreting the correctly)
+nausea.aug %>% 
+  roc_curve(truth = Nausea, .pred_No) %>% 
+  autoplot() 
+# Using roc_auc to look at the area under the curve
+nausea.aug %>% 
+  roc_auc(truth = Nausea, .pred_No)
+# Makes sense that the .pred_No = 0.7695281, the inverse of .pred_Yes. And it IS useful
+
+```
+################################################################################
+# Alternative model
+## Creating a recipe: Nausea x RunnyNose
+In this section we are going to create a simple recipe that fits our categorical outcome of interest to RunnyNose predictor
+Since the outcome is categorical(nausea), we are going to use a logistic regression
+```{r}
+nausea.rec2<- recipe(Nausea ~ RunnyNose, data = train_data) #Using training data
+summary(nausea.rec2)
+```
+# Alternative model: Fitting a logistic model to Nausea using all predictors of interest
+```{r}
+# Using the tidymodels package, I am going to set up the logistic model
+# Set the engine
+lr.mod2 <-  logistic_reg() %>% 
+  set_engine("glm") 
+```
+## Setting workflow
+In this section we are going to create a simple recipe that fits our categorical outcome of interest to all predictors
+```{r}
+nausea.wflow2 <- 
+  workflow() %>% 
+  add_model(lr.mod2) %>% 
+  add_recipe(nausea.rec2)
+nausea.wflow2
+# Not sure why there are 0 steps
+```
+## Train the model using the workflow
+```{r}
+nausea.fit2 <- 
+  nausea.wflow2 %>% 
+  fit(data = train_data)
+nausea.fit2
+
+# To view a tibble 
+nausea.fit2 %>%
+  extract_fit_parsnip() %>%
+  tidy()
+```
+# Alternative model evaluation
+Here we are going to look at the predictions, ROC and ROC-AUC for our data using the predict() function
+```{r}
+# applying recipe to test data
+predict(nausea.fit2, test_data)
+# This is just giving us the nausea status, but we want to look at the predictors individually
+# So we are going to "augment" the test data function to show the predictors individually
+nausea.aug2 <- 
+  augment(nausea.fit2, test_data)
+# Lets look at the output now ???
+nausea.aug2 %>%
+  select(Nausea, .pred_class, .pred_Yes, .pred_No) 
+# Choosing pred.Yes because I want to know how well it predicts a nausea event
+```
+
+## Creating an ROC curve for Nausea event 
+```{r}
+nausea.aug2 %>% 
+  roc_curve(truth = Nausea, .pred_Yes) %>% 
+  autoplot() #Not the best curve, lets get some numbers for it
+# Using roc_auc to look at the area under the curve
+nausea.aug2 %>% 
+  roc_auc(truth = Nausea, .pred_Yes)
+# The estimate (0.5529859) is > 0.5, a little better than our first model. 
+# We can expect .pred_Yes will be somewhere around 0.45 but lets look
+nausea.aug2 %>% 
+  roc_auc(truth = Nausea, .pred_No)
+# Our estimate for a non-Nausea event is 0.4470141
+```
