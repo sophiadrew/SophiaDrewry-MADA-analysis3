@@ -181,3 +181,141 @@ nausea.aug2 %>%
   roc_auc(truth = Nausea, .pred_No)
 # Our estimate for a non-Nausea event is 0.4470141
 ```
+
+########################## Modeling Continuous Outcomes ###########################
+################################# Ryan Grunert ###################################
+
+# Creating the recipe for BodyTemp vs all predictors
+In this section we are going to create a recipe that fits our continuous outcome BodyTemp to all predictors.
+We are going to use a linear regression.
+```{r}
+BodyTemp.rec <- recipe(BodyTemp ~ ., data = train_data) #Using training data
+summary(BodyTemp.rec)
+```
+
+# Model 3. Fitting a linear model to BodyTemp using all predictors of interest
+```{r}
+#Setting up the linear model
+lr.mod3 <-  linear_reg() %>% 
+  set_engine("lm") %>%
+  set_mode("regression")
+```
+
+## Setting workflow
+Here we create the workflow for the model
+```{r}
+BodyTemp.wflow <- #Creating the workflow for the model
+  workflow() %>% 
+  add_model(lr.mod3) %>% 
+  add_recipe(BodyTemp.rec)
+BodyTemp.wflow
+```
+
+## Training the model with the workflow
+```{r}
+BodyTemp.fit <- 
+  BodyTemp.wflow %>% 
+  fit(data = train_data)
+BodyTemp.fit
+
+# To view a tibble 
+BodyTemp.fit %>%
+  extract_fit_parsnip() %>%
+  tidy()
+```
+
+# Model 3 Evaluation
+```{r}
+# applying recipe to test data
+predict(BodyTemp.fit, test_data)
+
+# So we are going to "augment" the test data function to show the predictors individually
+BodyTemp.aug <- 
+  augment(BodyTemp.fit, test_data)
+
+BodyTemp.aug %>%
+  select(BodyTemp, .pred) 
+```
+
+#Evaluating the model with rmse()
+```{r}
+BodyTemp.aug %>% #Taking the root-mean square error of the model
+  rmse(truth = BodyTemp, .pred)
+```
+The root-mean square error is 1.179824
+
+
+
+# Creating the recipe for BodyTemp vs all predictors
+In this section we are going to create a simple recipe that fits our continuous outcome of interest BodyTemp to RunnyNose
+We are going to use a linear regression.
+```{r}
+BodyTemp.rec2 <- recipe(BodyTemp ~ RunnyNose, data = train_data) #Using training data to create the recipe
+summary(BodyTemp.rec2)
+```
+
+# Model 4. Fitting a linear model to BodyTemp and RunnyNose
+```{r}
+# Setting the model
+lr.mod4 <-  linear_reg() %>% 
+  set_engine("lm") %>%
+  set_mode("regression")
+```
+
+## Setting workflow
+Here we create the workflow for the model
+```{r}
+BodyTemp.wflow2 <- #Creating the workflow for the model
+  workflow() %>% 
+  add_model(lr.mod4) %>% 
+  add_recipe(BodyTemp.rec2)
+BodyTemp.wflow2
+```
+
+## Training the model with the workflow
+```{r}
+BodyTemp.fit2 <- #fitting the model
+  BodyTemp.wflow2 %>% 
+  fit(data = train_data)
+BodyTemp.fit2
+
+# To view a tibble 
+BodyTemp.fit2 %>%
+  extract_fit_parsnip() %>%
+  tidy()
+```
+
+# Model 4 Evaluation
+```{r}
+# applying recipe to test data
+predict(BodyTemp.fit2, test_data)
+
+# So we are going to "augment" the test data function to show the predictors individually
+BodyTemp.aug2 <- 
+  augment(BodyTemp.fit2, test_data)
+
+BodyTemp.aug2 %>%
+  select(BodyTemp, .pred) 
+```
+
+#Evaluating Model 4 with rmse()
+```{r}
+BodyTemp.aug2 %>% #taking the root-mean square error of the model
+  rmse(truth = BodyTemp, .pred)
+```
+The root-mean square error is 1.190752
+
+Based on both of the RMSE values, the linear model that uses all the predictors is slightly better than the model using just the RunnyNose predictor.
+
+
+
+
+
+
+
+
+
+
+
+
+
