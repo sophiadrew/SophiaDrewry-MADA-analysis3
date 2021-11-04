@@ -2,6 +2,10 @@
 This repository is home for data processing and analysis for Modern Applied Data Analysis class Fall of 2021. 
 Data was retrived from https://datadryad.org/stash/dataset/doi:10.5061/dryad.51c59zw4v 
 "Virulence-mediated infectiousness and activity trade-offs and their impact on transmission potential of patients infected with influenza" By Brian Mcay et al. 
+
+## Note for Dr. Handel
+- Pre-processing was added to 'processingscript.R'
+
 # Overview
 
 This repository is structured as follows:

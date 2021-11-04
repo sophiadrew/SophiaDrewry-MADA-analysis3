@@ -250,8 +250,8 @@ Other predictor variables
 - Runny nose
 
 ```{r}
-smalldta <- processeddta[, c("Fatigue", "ChillsSweats", "SwollenLymphNodes", "Pharyngitis", "Insomnia", "Headache", "SubjectiveFever", "CoughIntensity", "BodyTemp", "Nausea", "RunnyNose")]
 
+smalldta <- processeddta[, c("Fatigue", "ChillsSweats", "SwollenLymphNodes", "Pharyngitis", "Insomnia", "Headache", "SubjectiveFever", "CoughIntensity", "BodyTemp", "Nausea", "RunnyNose")]
 save_data_location <- here::here("data","processed_data","smalldta.rds")
 saveRDS(smalldta, file = save_data_location)
 

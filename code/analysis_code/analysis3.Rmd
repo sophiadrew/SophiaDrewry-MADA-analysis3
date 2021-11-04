@@ -1,0 +1,140 @@
+---
+title: "Analysis3"
+author: "Sophia Drewry"
+date: "11/4/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script loads the cleaned and processed data to perform some formal statistical fitting
+This excersise will focus on the continious outcome "BodyTemp"
+```{r}
+# load needed packages. make sure they are installed.
+library(dplyr) #for data processing
+library(here) #to set paths
+library(tidymodels) #to fit models
+```
+#Load data
+```{r}
+# note the use of the here() package and not absolute paths
+dataSPOT <- here::here("data","processed_data","processeddta.rds")
+# load data. 
+processeddta <-readRDS(dataSPOT)
+```
+# Data splitting
+Here we are going to split the data randomly into training and testing subsets
+- Training data will be used to fit the model. 
+- Testing set will be used to evaluate the model.
+```{r}
+# Setting a seed for random number generation so if this analysis is reproduced, the same random set will be generated
+set.seed(123)
+# Subsetting 70% of data into training and 20% of data into testing
+# We using Body Temp to stratify
+data_split <- initial_split(processeddta, prop = .7, strata = BodyTemp)
+# Creating training data
+train_data <- training(data_split)
+# Creating testing data
+test_data  <- testing(data_split)
+```
+# 5-fold cross-validation, 5x repeated
+```{r}
+# Creating a resample object for our trainng data
+set.seed(123)
+folds <- vfold_cv(train_data, v = 5, repeats = 5, strata = BodyTemp)
+folds
+```
+## Setting workflows & training models: Model 1 
+###### Not sure if I need to create this for comparison...
+```{r}
+# Regular model workflow
+BodyTemp.wflow <-
+  workflow() %>% 
+  add_model(lr.mod) %>% 
+  add_recipe(BodyTemp.rec)
+# Regular model training
+BodyTemp.fit <- 
+  BodyTemp.wflow %>% 
+  fit(data = train_data)
+# To view a tibble 
+BodyTemp.fit %>%
+  extract_fit_parsnip() %>%
+  tidy()
+```
+
+# Fitting a linear model to BodyTemp 
+```{r}
+#Setting up the linear model
+lr.mod <-  linear_reg() %>% 
+  set_engine("lm") %>%
+  set_mode("regression")
+# Creating Recipe for Regular model
+BodyTemp.rec <- recipe(BodyTemp ~ ., data = train_data) 
+#########################  Dummy Var #########################
+# Creating Recipe TRAIN DTA for all categorical Dummy Variables 
+D.BodyTemp.rec <- recipe(BodyTemp ~ ., data = train_data)  %>% 
+  step_dummy(all_nominal(), -BodyTemp)
+# Create workflow
+D.BT.wflow <- workflow() %>% 
+  add_model(lr.mod) %>% 
+  add_recipe(BodyTemp.rec)
+# Fit model to training data
+D.BT.fit <- 
+  D.BT.wflow %>% 
+  fit(data = train_data)
+# evaluate
+D.BT.fit %>% 
+  extract_fit_parsnip() %>% 
+  tidy()
+```
+
+# Creating a Null Model 
+```{r}
+N.mod<- null_model() %>% 
+  set_engine("parsnip") %>% 
+  set_mode("regression")
+
+#########################Training#########################
+# Creating null recipe & model with TRAIN data
+N.BT.train.rec <- recipe(BodyTemp ~ ., data = train_data)
+#workflow
+N.BT.train.wflow <-
+  workflow() %>% 
+  add_model(N.mod) %>% 
+  add_recipe(N.BT.train.rec)
+
+N.BT.train.fit <- fit_resamples(N.BT.train.wflow, resamples = folds)
+
+N.BT.train.rmse <- collect_metrics(N.BT.train.fit)
+```
+
+## Training new model with workflow
+```{r}
+# Train data
+N.BodyTemp.fit <- 
+  N.BodyTemp.wflow %>% 
+  fit_resamples(folds)
+
+predict(BodyTemp.fit, test_data)
+
+BodyTemp.aug2 <- augment(BodyTemp.fit2, test_data)
+BodyTemp.aug2 %>% select(BodyTemp, .pred) 
+# Using RMSE
+BodyTemp.aug2 %>% #taking the root-mean square error of the model
+  rmse(truth = BodyTemp, .pred)
+```
+The root-mean square error is...?
+
+
+
+
+
+
+
+
+
+
+
+
