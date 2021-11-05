@@ -12,10 +12,13 @@ knitr::opts_chunk$set(echo = TRUE)
 This script loads the cleaned and processed data to perform some formal statistical fitting
 This excersise will focus on the continious outcome "BodyTemp"
 ```{r}
-# load needed packages. make sure they are installed.
+# load needed packages. make sure they are installed or else...
 library(dplyr) #for data processing
 library(here) #to set paths
 library(tidymodels) #to fit models
+library(rpart)
+library(glmnet)
+library(ranger)
 ```
 #Load data
 ```{r}
@@ -46,9 +49,16 @@ set.seed(123)
 folds <- vfold_cv(train_data, v = 5, repeats = 5, strata = BodyTemp)
 folds
 ```
+///////////////////////////////////////////////////////////////////////////////
 ## Setting workflows & training models: Model 1 
 ###### Not sure if I need to create this for comparison...
 ```{r}
+#Setting up the linear model
+lr.mod <-  linear_reg() %>% 
+  set_engine("lm") %>%
+  set_mode("regression")
+#recipe
+BodyTemp.rec <- recipe(BodyTemp ~ ., data = train_data)
 # Regular model workflow
 BodyTemp.wflow <-
   workflow() %>% 
@@ -95,44 +105,236 @@ D.BT.fit %>%
 N.mod<- null_model() %>% 
   set_engine("parsnip") %>% 
   set_mode("regression")
-
+```
 #########################Training#########################
+```{r}
 # Creating null recipe & model with TRAIN data
 N.BT.train.rec <- recipe(BodyTemp ~ ., data = train_data)
-#workflow
+# workflow
 N.BT.train.wflow <-
   workflow() %>% 
   add_model(N.mod) %>% 
   add_recipe(N.BT.train.rec)
-
-N.BT.train.fit <- fit_resamples(N.BT.train.wflow, resamples = folds)
-
-N.BT.train.rmse <- collect_metrics(N.BT.train.fit)
-```
-
-## Training new model with workflow
-```{r}
-# Train data
-N.BodyTemp.fit <- 
-  N.BodyTemp.wflow %>% 
-  fit_resamples(folds)
-
-predict(BodyTemp.fit, test_data)
-
-BodyTemp.aug2 <- augment(BodyTemp.fit2, test_data)
-BodyTemp.aug2 %>% select(BodyTemp, .pred) 
-# Using RMSE
-BodyTemp.aug2 %>% #taking the root-mean square error of the model
+# fitting
+N.BT.train.fit <- 
+  N.BT.train.wflow %>% 
+  fit(data = train_data)
+predict(N.BT.train.fit, train_data)
+N.BT.train.aug <- augment(N.BT.train.fit, train_data) # I dont think i need this
+N.BT.train.aug %>% select(BodyTemp, .pred) 
+N.BT.train.aug %>% #taking the root-mean square error of the model
   rmse(truth = BodyTemp, .pred)
+
+# RMSE = 1.209327	
+
+# No idea what to do with folds... kept just in case
+# N.BT.train.fit <- fit_resamples(N.BT.train.wflow, resamples = folds)
+# N.BT.train.rmse <- collect_metrics(N.BT.train.fit)
 ```
-The root-mean square error is...?
+################################   Testing   ################################
+```{r}
+# fitting
+N.BT.train.fit <- 
+  N.BT.train.wflow %>% 
+  fit(data = train_data)
+predict(N.BT.train.fit, test_data)
+N.BT.train.aug <- augment(N.BT.train.fit, test_data) # I dont think i need this
+N.BT.train.aug %>% select(BodyTemp, .pred) 
+N.BT.train.aug %>% #taking the root-mean square error of the model
+  rmse(truth = BodyTemp, .pred)
+
+# RMSE = 1.163343	
+
+```
+///////////////////////////////////////////////////////////////////////////////
+# Creating Models
+################################   Tree  ################################
+```{r}
+## Tuning hyperparameters
+tune_spec <- 
+  decision_tree(cost_complexity = tune(), tree_depth = tune()) %>% 
+  set_engine("rpart") %>% 
+  set_mode("regression")
+tune_spec # We will come back to these parameters
+## Create a grid
+tree_grid <- grid_regular(cost_complexity(),
+                          tree_depth(),
+                          levels = 5)
+tree_grid %>% count(tree_depth)
+# creating CV folds
+set.seed(123)
+train.folds <- vfold_cv(train_data)
+```
+## Tuning with a grid
+```{r}
+treeBT <- workflow() %>%
+  add_model(tune_spec) %>%
+  add_recipe(N.BT.train.rec)
+tree_res <- treeBT %>% 
+  tune_grid(resamples = train.folds, grid = tree_grid)
+tree_res %>% collect_metrics()
+```
+## Plotting for the world to see
+```{r}
+tree_res %>%
+  collect_metrics() %>%
+  mutate(tree_depth = factor(tree_depth)) %>%
+  ggplot(aes(cost_complexity, mean, color = tree_depth)) +
+  geom_line(size = 1.5, alpha = 0.6) +
+  geom_point(size = 2) +
+  facet_wrap(~ .metric, scales = "free", nrow = 2) +
+  scale_x_log10(labels = scales::label_number()) +
+  scale_color_viridis_d(option = "plasma", begin = .9, end = 0)
+# Looks like we have 2 deeper "trees" that perform similar in cost complexity as well, but not the best
+# Lets check out the top 5
+tree_res %>% show_best("rmse")
+# Now to pull out the best set of hyperparameter values for our decision tree model
+best_tree <- tree_res %>% select_best("rmse")
+best_tree
+```
+## Finalize the model
+```{r}
+# finalize workflow
+final_wf <- treeBT %>% finalize_workflow(best_tree)
+# final fit
+final_fit <- final_wf %>% last_fit(data_split) 
+final_fit %>% collect_metrics()
+final_fit %>% collect_predictions() 
+```
+><><><><><><><><><><><><><><><><><><><><><><><><> broken code
+
+##Let’s visualize these metrics, RMSE and R2
+final_fit %>% collect_metrics()
+         ggplot(aes(tree_depth, mean, color = .metric)) +
+         geom_errorbar(aes(
+         ymin = mean - std_err,
+         ymax = mean + std_err
+         ),
+         alpha = 0.5
+         ) +
+        geom_line(size = 1.5) +
+        facet_wrap(~.metric, scales = "free", nrow = 2)
+
+## Visualize
+```{r}
+final_tree <- extract_workflow(final_fit)
+final_tree %>%
+  extract_fit_engine() %>%
+  rpart.plot(roundint = FALSE)
+```
+################################   LASSO  ################################
+sources:
+https://www.tidymodels.org/start/case-study/
+https://stackoverflow.com/questions/66639452/tuning-a-lasso-model-and-predicting-using-tidymodels
+
+## Building model
+```{r}
+# create recipe < not sure If I should be using old recipe or not
+lasso.rec <- recipe(BodyTemp ~ ., data = train_data) %>%
+    step_center(all_predictors(), -all_nominal()) %>% 
+    step_dummy(all_nominal())
+# set workflow
+lasso_mod <- linear_reg(mode = "regression", penalty = tune(), mixture = 1) %>% 
+   set_engine("lm")
+
+lasso.wflow <- workflow() %>%
+    add_model(lasso_mod) %>%
+    add_recipe(lasso.rec)
+# creating grid and tuning
+lr_reg_grid <- tibble(penalty = 10^seq(-4, -1, length.out = 30)) # I have no idea what this is
+lr_reg_grid %>% top_n(-5)
+lr_reg_grid %>% top_n(5)
+```
+## Train and tune LASSO
+```{r}
+lasso.res <- lasso.wflow %>% 
+  tune_grid(resamples = folds,
+            grid = lr_reg_grid,
+            control = control_grid(save_pred = TRUE),
+            metrics = metric_set(rmse))
+
+```
+Once again, I am unable to visualize 
+lasso.plot <- lasso.res %>% 
+  collect_metrics() %>% 
+  ggplot(aes(x = penalty, y = mean)) + 
+  geom_point() + 
+  geom_line() + 
+  scale_x_log10(labels = scales::label_number())
+lasso.plot 
+## Visulaize
+```{r}
+lasso.top.models <- lasso.res %>% 
+  show_best("rmse", n = 15) 
+lasso.top.models
+
+lasso.best <- 
+  lasso.res %>% 
+  collect_metrics() %>% 
+  slice(12)
+lasso.best
+```
+### failure, but saved for just in case
+lasso.auc <- 
+  lasso.res %>% 
+  collect_predictions(parameters = lasso.best) %>% 
+  rmse(BodyTemp, .predictions) %>% # what goes here instead of .predictionss?
+  mutate(model = "Linear Regression")
+autoplot(lasso.auc)
 
 
 
+################################   TREE  ################################
+sources:
+https://www.tidymodels.org/start/case-study/
+https://stackoverflow.com/questions/65370000/tidymodels-a-plot-showing-performance-model-metrics-rmse-rsq-for-a-random-f
+```{r}
+# query the number of cores on my own computer
+cores <- parallel::detectCores()
+cores
 
+rf.mod <- 
+  rand_forest(mtry = tune(), min_n = tune(), trees = 1000) %>% 
+  set_engine("ranger", num.threads = cores) %>% 
+  set_mode("regression")
+```
+## Create recipe and workflow
+```{r}
+rf.recipe <- 
+  recipe(BodyTemp ~ ., data = train_data) # %>% 
+# I have no idea if I need to do feature engineering
+  #step_date(arrival_date) %>% 
+  #step_holiday(arrival_date) %>% 
+  #step_rm(arrival_date) 
+rf.wflow <- 
+  workflow() %>% 
+  add_model(rf.mod) %>% 
+  add_recipe(rf.recipe)
+```
+# Train and tune
+```{r}
+rf.mod
+rf.mod %>% parameters() 
+# space-filling design to tune, with 25 candidate models
+set.seed(123)
+rf.res <- rf.wflow %>% 
+  tune_grid(resamples = folds, grid = 9,
+            control = control_grid(save_pred = TRUE),
+            metrics = metric_set(rmse))
+# R keeps aborting session...
+```
 
+```{r}
+rf_res %>% show_best(metric = "rmse")
+autoplot(rf_res)
 
+rf_best <- rf_res %>% 
+  select_best(metric = "rmse")
+rf_best
 
+rf_res %>% 
+  collect_predictions()
+```
 
 
 
