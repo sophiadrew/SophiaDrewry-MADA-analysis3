@@ -19,6 +19,8 @@ library(tidymodels) #to fit models
 library(rpart)
 library(glmnet)
 library(ranger)
+library(future)
+
 ```
 #Load data
 ```{r}
@@ -51,6 +53,12 @@ folds
 ```
 ///////////////////////////////////////////////////////////////////////////////
 ## Setting workflows & training models: Model 1 
+Setting up lr.mod that will be used for the rest of the excersise
+```{r}
+lr.mod <-  linear_reg() %>% 
+  set_engine("lm") %>%
+  set_mode("regression")
+```
 ###### Not sure if I need to create this for comparison...
 ```{r}
 #Setting up the linear model
@@ -72,18 +80,14 @@ BodyTemp.fit <-
 BodyTemp.fit %>%
   extract_fit_parsnip() %>%
   tidy()
+# paUSING FOR NOW BECAUSE I DONT THINK I NEED THIS, DELETE
 ```
 
 # Fitting a linear model to BodyTemp 
 ```{r}
-#Setting up the linear model
-lr.mod <-  linear_reg() %>% 
-  set_engine("lm") %>%
-  set_mode("regression")
-# Creating Recipe for Regular model
-BodyTemp.rec <- recipe(BodyTemp ~ ., data = train_data) 
 #########################  Dummy Var #########################
-# Creating Recipe TRAIN DTA for all categorical Dummy Variables 
+# Creating Recipe TRAIN DTA for all categorical Dummy Variables
+#Setting up the linear model
 D.BodyTemp.rec <- recipe(BodyTemp ~ ., data = train_data)  %>% 
   step_dummy(all_nominal(), -BodyTemp)
 # Create workflow
@@ -102,36 +106,44 @@ D.BT.fit %>%
 
 # Creating a Null Model 
 ```{r}
-N.mod<- null_model() %>% 
-  set_engine("parsnip") %>% 
-  set_mode("regression")
+# Create null formula
+N.BodyTemp.rec <- recipe(BodyTemp ~ 1., data = train_data)  
 ```
-#########################Training#########################
+
+#########################  Null Training    #########################
 ```{r}
 # Creating null recipe & model with TRAIN data
-N.BT.train.rec <- recipe(BodyTemp ~ ., data = train_data)
-# workflow
+# set workflow
 N.BT.train.wflow <-
   workflow() %>% 
-  add_model(N.mod) %>% 
-  add_recipe(N.BT.train.rec)
+  add_model(lr.mod) %>% 
+  add_recipe(N.BodyTemp.rec)
 # fitting
 N.BT.train.fit <- 
   N.BT.train.wflow %>% 
   fit(data = train_data)
+# usual
+N.BT.train.fit %>% 
+  extract_fit_parsnip() %>% 
+  tidy()
+# RMSE
 predict(N.BT.train.fit, train_data)
-N.BT.train.aug <- augment(N.BT.train.fit, train_data) # I dont think i need this
+N.BT.train.aug <- augment(N.BT.train.fit, train_data)
 N.BT.train.aug %>% select(BodyTemp, .pred) 
-N.BT.train.aug %>% #taking the root-mean square error of the model
-  rmse(truth = BodyTemp, .pred)
+N.BT.train.aug %>% rmse(truth = BodyTemp, .pred)
 
 # RMSE = 1.209327	
-
-# No idea what to do with folds... kept just in case
-# N.BT.train.fit <- fit_resamples(N.BT.train.wflow, resamples = folds)
-# N.BT.train.rmse <- collect_metrics(N.BT.train.fit)
 ```
-################################   Testing   ################################
+Notes: I got same RMSE using null_model() and also manually setting the formula
+# No idea what to do with folds... kept just in case
+N.BT.train.fit <- fit_resamples(N.BT.train.wflow, resamples = folds)
+ N.BT.train.rmse <- collect_metrics(N.BT.train.fit)
+# broken, saved just in case
+N.mod<- null_model() %>% 
+  set_engine("parsnip") %>% 
+  set_mode("regression")
+  
+################################ Null  Testing   ################################
 ```{r}
 # fitting
 N.BT.train.fit <- 
@@ -142,10 +154,11 @@ N.BT.train.aug <- augment(N.BT.train.fit, test_data) # I dont think i need this
 N.BT.train.aug %>% select(BodyTemp, .pred) 
 N.BT.train.aug %>% #taking the root-mean square error of the model
   rmse(truth = BodyTemp, .pred)
-
 # RMSE = 1.163343	
 
 ```
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 # Creating Models
 ################################   Tree  ################################
@@ -169,7 +182,7 @@ train.folds <- vfold_cv(train_data)
 ```{r}
 treeBT <- workflow() %>%
   add_model(tune_spec) %>%
-  add_recipe(N.BT.train.rec)
+  add_recipe(BodyTemp.rec)
 tree_res <- treeBT %>% 
   tune_grid(resamples = train.folds, grid = tree_grid)
 tree_res %>% collect_metrics()
@@ -200,20 +213,9 @@ final_wf <- treeBT %>% finalize_workflow(best_tree)
 final_fit <- final_wf %>% last_fit(data_split) 
 final_fit %>% collect_metrics()
 final_fit %>% collect_predictions() 
-```
-><><><><><><><><><><><><><><><><><><><><><><><><> broken code
 
-##Let’s visualize these metrics, RMSE and R2
-final_fit %>% collect_metrics()
-         ggplot(aes(tree_depth, mean, color = .metric)) +
-         geom_errorbar(aes(
-         ymin = mean - std_err,
-         ymax = mean + std_err
-         ),
-         alpha = 0.5
-         ) +
-        geom_line(size = 1.5) +
-        facet_wrap(~.metric, scales = "free", nrow = 2)
+# RMSE = 1.1874943427
+```
 
 ## Visualize
 ```{r}
@@ -229,26 +231,22 @@ https://stackoverflow.com/questions/66639452/tuning-a-lasso-model-and-predicting
 
 ## Building model
 ```{r}
-# create recipe < not sure If I should be using old recipe or not
-lasso.rec <- recipe(BodyTemp ~ ., data = train_data) %>%
-    step_center(all_predictors(), -all_nominal()) %>% 
-    step_dummy(all_nominal())
 # set workflow
-lasso_mod <- linear_reg(mode = "regression", penalty = tune(), mixture = 1) %>% 
-   set_engine("lm")
-
+lasso.mod <- linear_reg(mode = "regression", penalty = tune(), mixture = 1) %>% 
+   set_engine("glmnet")
 lasso.wflow <- workflow() %>%
-    add_model(lasso_mod) %>%
-    add_recipe(lasso.rec)
+    add_model(lasso.mod) %>%
+    add_recipe(BodyTemp.rec)
+```
+## Train and tune LASSO
+```{r}
 # creating grid and tuning
 lr_reg_grid <- tibble(penalty = 10^seq(-4, -1, length.out = 30)) # I have no idea what this is
 lr_reg_grid %>% top_n(-5)
 lr_reg_grid %>% top_n(5)
-```
-## Train and tune LASSO
-```{r}
+
 lasso.res <- lasso.wflow %>% 
-  tune_grid(resamples = folds,
+  tune_grid(resamples = train.folds,
             grid = lr_reg_grid,
             control = control_grid(save_pred = TRUE),
             metrics = metric_set(rmse))
@@ -282,9 +280,36 @@ lasso.auc <-
   mutate(model = "Linear Regression")
 autoplot(lasso.auc)
 
+```{r}
+# LASSO ATTEMPT #2
+lasso_rec <- recipe(BodyTemp ~ ., data = train_data) %>% 
+  step_zv(all_numeric(), -all_outcomes()) %>%
+  step_normalize(all_numeric(), -all_outcomes())
+
+lasso_prep <- lasso_rec %>%
+  prep(strings_as_factors = FALSE)
+
+lasso_spec <- linear_reg(penalty = 0.1, mixture = 1) %>%
+  set_engine("glmnet")
+
+lasso_wf <- workflow() %>%
+  add_recipe(lasso_rec)
+
+lasso_fit <- lasso_wf %>%
+  add_model(lasso_spec) %>%
+  fit(data = train_data)
+
+lasso_fit %>%
+  pull_workflow_fit() %>%
+  tidy()
 
 
-################################   TREE  ################################
+```
+
+
+
+
+################################   Random Forrest  ################################
 sources:
 https://www.tidymodels.org/start/case-study/
 https://stackoverflow.com/questions/65370000/tidymodels-a-plot-showing-performance-model-metrics-rmse-rsq-for-a-random-f
@@ -300,15 +325,11 @@ rf.mod <-
 ```
 ## Create recipe and workflow
 ```{r}
-rf.recipe <- 
-  recipe(BodyTemp ~ ., data = train_data) # %>% 
-# I have no idea if I need to do feature engineering
-  #step_date(arrival_date) %>% 
-  #step_holiday(arrival_date) %>% 
-  #step_rm(arrival_date) 
+rf.recipe <- recipe(BodyTemp ~ ., data = train_data)  %>% 
+  step_dummy(all_nominal(), -BodyTemp)
 rf.wflow <- 
   workflow() %>% 
-  add_model(rf.mod) %>% 
+  add_model(mod_rf) %>% 
   add_recipe(rf.recipe)
 ```
 # Train and tune
@@ -336,7 +357,43 @@ rf_res %>%
   collect_predictions()
 ```
 
+Attempt #2 for Trees
+```{r}
+set.seed(123)
+mod_rf <-rand_forest() %>%
+  set_engine("ranger",
+             num.threads = parallel::detectCores(), 
+             importance = "permutation", 
+             verbose = TRUE) %>% 
+  set_mode("regression") %>% 
+  set_args(trees = 100)
+```
+
+```{r}
+rf.recipe <- recipe(BodyTemp ~ ., data = train_data)  %>% 
+  step_dummy(all_nominal(), -BodyTemp)
+rf.wflow <- 
+  workflow() %>% 
+  add_model(mod_rf) %>% 
+  add_recipe(rf.recipe)
+
+```
+
+```{r}
+set.seed(123)
+plan(multisession)
+
+fit_rf <- fit_resamples(
+  rf.wflow,
+  resamples = folds,
+  metrics = metric_set(rmse, rsq),
+  control = control_resamples(verbose = TRUE,
+                              save_pred = TRUE,
+                              extract = function(x) x)
+)
+
+```
+library(future)
 
 
-
-
+```

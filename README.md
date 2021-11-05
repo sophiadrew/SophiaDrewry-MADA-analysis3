@@ -5,6 +5,7 @@ Data was retrived from https://datadryad.org/stash/dataset/doi:10.5061/dryad.51c
 
 ## Note for Dr. Handel
 - Pre-processing was added to 'processingscript.R'
+- This weeks work was done in `analysis3.Rmd`
 
 # Overview
 
