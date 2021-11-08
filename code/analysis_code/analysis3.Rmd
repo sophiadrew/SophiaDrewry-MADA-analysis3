@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 This script loads the cleaned and processed data to perform some formal statistical fitting
-This excersise will focus on the continious outcome "BodyTemp"
+This excersise will focus on the continuous outcome "BodyTemp"
 ```{r}
 # load needed packages. make sure they are installed or else...
 library(dplyr) #for data processing
@@ -20,7 +20,8 @@ library(rpart)
 library(glmnet)
 library(ranger)
 library(future)
-
+library(parallel)
+library(doParallel)
 ```
 #Load data
 ```{r}
@@ -38,7 +39,7 @@ Here we are going to split the data randomly into training and testing subsets
 set.seed(123)
 # Subsetting 70% of data into training and 20% of data into testing
 # We using Body Temp to stratify
-data_split <- initial_split(processeddta, prop = .7, strata = BodyTemp)
+data_split <- initial_split(processeddta, prop = .7, strata = "BodyTemp")
 # Creating training data
 train_data <- training(data_split)
 # Creating testing data
@@ -48,39 +49,16 @@ test_data  <- testing(data_split)
 ```{r}
 # Creating a resample object for our trainng data
 set.seed(123)
-folds <- vfold_cv(train_data, v = 5, repeats = 5, strata = BodyTemp)
+folds <- vfold_cv(train_data, v = 5, repeats = 5, strata = "BodyTemp")
 folds
 ```
 ///////////////////////////////////////////////////////////////////////////////
 ## Setting workflows & training models: Model 1 
 Setting up lr.mod that will be used for the rest of the excersise
 ```{r}
-lr.mod <-  linear_reg() %>% 
+lr.mod <- linear_reg() %>% 
   set_engine("lm") %>%
   set_mode("regression")
-```
-###### Not sure if I need to create this for comparison...
-```{r}
-#Setting up the linear model
-lr.mod <-  linear_reg() %>% 
-  set_engine("lm") %>%
-  set_mode("regression")
-#recipe
-BodyTemp.rec <- recipe(BodyTemp ~ ., data = train_data)
-# Regular model workflow
-BodyTemp.wflow <-
-  workflow() %>% 
-  add_model(lr.mod) %>% 
-  add_recipe(BodyTemp.rec)
-# Regular model training
-BodyTemp.fit <- 
-  BodyTemp.wflow %>% 
-  fit(data = train_data)
-# To view a tibble 
-BodyTemp.fit %>%
-  extract_fit_parsnip() %>%
-  tidy()
-# paUSING FOR NOW BECAUSE I DONT THINK I NEED THIS, DELETE
 ```
 
 # Fitting a linear model to BodyTemp 
@@ -105,9 +83,10 @@ D.BT.fit %>%
 ```
 
 # Creating a Null Model 
+This is to use as a comparison for our other future models
 ```{r}
 # Create null formula
-N.BodyTemp.rec <- recipe(BodyTemp ~ 1., data = train_data)  
+BodyTemp.rec <- recipe(BodyTemp ~ 1., data = train_data)  
 ```
 
 #########################  Null Training    #########################
@@ -117,7 +96,7 @@ N.BodyTemp.rec <- recipe(BodyTemp ~ 1., data = train_data)
 N.BT.train.wflow <-
   workflow() %>% 
   add_model(lr.mod) %>% 
-  add_recipe(N.BodyTemp.rec)
+  add_recipe(BodyTemp.rec)
 # fitting
 N.BT.train.fit <- 
   N.BT.train.wflow %>% 
@@ -134,14 +113,6 @@ N.BT.train.aug %>% rmse(truth = BodyTemp, .pred)
 
 # RMSE = 1.209327	
 ```
-Notes: I got same RMSE using null_model() and also manually setting the formula
-# No idea what to do with folds... kept just in case
-N.BT.train.fit <- fit_resamples(N.BT.train.wflow, resamples = folds)
- N.BT.train.rmse <- collect_metrics(N.BT.train.fit)
-# broken, saved just in case
-N.mod<- null_model() %>% 
-  set_engine("parsnip") %>% 
-  set_mode("regression")
   
 ################################ Null  Testing   ################################
 ```{r}
@@ -163,29 +134,35 @@ N.BT.train.aug %>% #taking the root-mean square error of the model
 # Creating Models
 ################################   Tree  ################################
 ```{r}
+#cross validation
+set.seed(123)
+other_folds <- vfold_cv(train_data)
+# Note, this was included in the tidymodels tutorial but it is not needed since we already created our own CV data. I am keepin git here because if I dont use it in LASSO model it will crash. Not sure why.
+
 ## Tuning hyperparameters
 tune_spec <- 
-  decision_tree(cost_complexity = tune(), tree_depth = tune()) %>% 
+  decision_tree(cost_complexity = tune(), 
+  tree_depth = tune()) %>% 
   set_engine("rpart") %>% 
   set_mode("regression")
 tune_spec # We will come back to these parameters
-## Create a grid
-tree_grid <- grid_regular(cost_complexity(),
-                          tree_depth(),
-                          levels = 5)
-tree_grid %>% count(tree_depth)
-# creating CV folds
-set.seed(123)
-train.folds <- vfold_cv(train_data)
+# setting workflow
+treeBT <- workflow() %>%
+  add_model(tune_spec) %>%
+  add_recipe(D.BodyTemp.rec)
+
 ```
 ## Tuning with a grid
 ```{r}
-treeBT <- workflow() %>%
-  add_model(tune_spec) %>%
-  add_recipe(BodyTemp.rec)
+# Create a grid
+tree_grid <- grid_regular(cost_complexity(),
+                          tree_depth(),
+                          levels = 5)
+# tuning
 tree_res <- treeBT %>% 
-  tune_grid(resamples = train.folds, grid = tree_grid)
+  tune_grid(resamples = folds, grid = tree_grid)
 tree_res %>% collect_metrics()
+
 ```
 ## Plotting for the world to see
 ```{r}
@@ -203,26 +180,21 @@ tree_res %>%
 tree_res %>% show_best("rmse")
 # Now to pull out the best set of hyperparameter values for our decision tree model
 best_tree <- tree_res %>% select_best("rmse")
-best_tree
-```
-## Finalize the model
-```{r}
 # finalize workflow
 final_wf <- treeBT %>% finalize_workflow(best_tree)
 # final fit
-final_fit <- final_wf %>% last_fit(data_split) 
-final_fit %>% collect_metrics()
-final_fit %>% collect_predictions() 
-
-# RMSE = 1.1874943427
+final_fit <- final_wf %>% fit(data = train_data) 
+final_fit
+final_pred <- predict(final_fit, train_data)
+tree_res %>% show_best("rmse", n = 1)
+# RMSE = 1.193128	
 ```
+RMSE = 1.193128	compared to Null model RMSE = 1.209 is not much of a difference
 
 ## Visualize
 ```{r}
-final_tree <- extract_workflow(final_fit)
-final_tree %>%
-  extract_fit_engine() %>%
-  rpart.plot(roundint = FALSE)
+rpart.plot(extract_fit_parsnip(final_fit)$fit)
+# simple one liner code used from Dr. Handel
 ```
 ################################   LASSO  ################################
 sources:
@@ -236,78 +208,53 @@ lasso.mod <- linear_reg(mode = "regression", penalty = tune(), mixture = 1) %>%
    set_engine("glmnet")
 lasso.wflow <- workflow() %>%
     add_model(lasso.mod) %>%
-    add_recipe(BodyTemp.rec)
+    add_recipe(D.BodyTemp.rec)
 ```
 ## Train and tune LASSO
+### Setting cores
+This code was taken from Dr. Handel, prevents my my session from aborting
 ```{r}
-# creating grid and tuning
-lr_reg_grid <- tibble(penalty = 10^seq(-4, -1, length.out = 30)) # I have no idea what this is
-lr_reg_grid %>% top_n(-5)
-lr_reg_grid %>% top_n(5)
+cores <- parallel::detectCores()
+cores
+ncores = 4
+cl <- makePSOCKcluster(ncores)
+registerDoParallel(cl)
 
+# creating grid and tuning
+lr_reg_grid <- tibble(penalty = 10^seq(-3, 0, length.out = 30)) 
+
+# tuning on training data
 lasso.res <- lasso.wflow %>% 
-  tune_grid(resamples = train.folds,
+  tune_grid(resamples = other_folds,
             grid = lr_reg_grid,
             control = control_grid(save_pred = TRUE),
             metrics = metric_set(rmse))
+# turn off parallel cluster
+stopCluster(cl)
 
 ```
-Once again, I am unable to visualize 
-lasso.plot <- lasso.res %>% 
-  collect_metrics() %>% 
-  ggplot(aes(x = penalty, y = mean)) + 
-  geom_point() + 
-  geom_line() + 
-  scale_x_log10(labels = scales::label_number())
-lasso.plot 
-## Visulaize
+Well, R session keeps aborting. I am stayin ghopeful. Here is the code if it were to work
+## Choosing the best performing model
 ```{r}
 lasso.top.models <- lasso.res %>% 
-  show_best("rmse", n = 15) 
-lasso.top.models
-
-lasso.best <- 
-  lasso.res %>% 
-  collect_metrics() %>% 
-  slice(12)
+  show_best("rmse") 
+lasso.best <- lasso.res %>% 
+  collect_metrics() 
 lasso.best
-```
-### failure, but saved for just in case
-lasso.auc <- 
-  lasso.res %>% 
-  collect_predictions(parameters = lasso.best) %>% 
-  rmse(BodyTemp, .predictions) %>% # what goes here instead of .predictionss?
-  mutate(model = "Linear Regression")
-autoplot(lasso.auc)
-
-```{r}
-# LASSO ATTEMPT #2
-lasso_rec <- recipe(BodyTemp ~ ., data = train_data) %>% 
-  step_zv(all_numeric(), -all_outcomes()) %>%
-  step_normalize(all_numeric(), -all_outcomes())
-
-lasso_prep <- lasso_rec %>%
-  prep(strings_as_factors = FALSE)
-
-lasso_spec <- linear_reg(penalty = 0.1, mixture = 1) %>%
-  set_engine("glmnet")
-
-lasso_wf <- workflow() %>%
-  add_recipe(lasso_rec)
-
-lasso_fit <- lasso_wf %>%
-  add_model(lasso_spec) %>%
+# finalize workflow with the best model
+best.lasso.wflow <- lasso.wflow %>% 
+  finalize_workflow(lasso.top.models)
+# fitting best performing model
+best.lasso.fit <- best.lasso.wflow %>% 
   fit(data = train_data)
-
-lasso_fit %>%
-  pull_workflow_fit() %>%
-  tidy()
-
-
+lasso.pred <- predict(best.lasso.fit, train_data)
 ```
-
-
-
+## Plotting performance
+This code is borrowed from Dr. Handel
+```{r}
+x <- best_lasso_fit$fit$fit$fit
+plot(x, "lambda")
+```
 
 ################################   Random Forrest  ################################
 sources:
@@ -318,6 +265,7 @@ https://stackoverflow.com/questions/65370000/tidymodels-a-plot-showing-performan
 cores <- parallel::detectCores()
 cores
 
+# Create model
 rf.mod <- 
   rand_forest(mtry = tune(), min_n = tune(), trees = 1000) %>% 
   set_engine("ranger", num.threads = cores) %>% 
@@ -325,26 +273,32 @@ rf.mod <-
 ```
 ## Create recipe and workflow
 ```{r}
-rf.recipe <- recipe(BodyTemp ~ ., data = train_data)  %>% 
-  step_dummy(all_nominal(), -BodyTemp)
 rf.wflow <- 
   workflow() %>% 
-  add_model(mod_rf) %>% 
-  add_recipe(rf.recipe)
+  add_model(rf.mod) %>% 
+  add_recipe(D.BodyTemp.rec)
 ```
 # Train and tune
 ```{r}
-rf.mod
-rf.mod %>% parameters() 
+# prevent R from crashing
+ncores = 4
+cl <- makePSOCKcluster(ncores)
+registerDoParallel(cl)
+
+# tuning grid. Code from Dr. Handel
+rf.grid  <- expand.grid(mtry = c(3, 4, 5, 6), min_n = c(40,50,60), trees = c(500,1000))
+
 # space-filling design to tune, with 25 candidate models
 set.seed(123)
 rf.res <- rf.wflow %>% 
-  tune_grid(resamples = folds, grid = 9,
-            control = control_grid(save_pred = TRUE),
+  tune_grid(resamples = folds, 
+            grid = rf.grid,
             metrics = metric_set(rmse))
 # R keeps aborting session...
+# turn off parallel cluster
+stopCluster(cl)
 ```
-
+## Evaluation
 ```{r}
 rf_res %>% show_best(metric = "rmse")
 autoplot(rf_res)
@@ -357,43 +311,30 @@ rf_res %>%
   collect_predictions()
 ```
 
-Attempt #2 for Trees
+# Final model. 
+Since the other two models are not working, I am going to run the final model on the Trees model
 ```{r}
-set.seed(123)
-mod_rf <-rand_forest() %>%
-  set_engine("ranger",
-             num.threads = parallel::detectCores(), 
-             importance = "permutation", 
-             verbose = TRUE) %>% 
-  set_mode("regression") %>% 
-  set_args(trees = 100)
-```
+# use test data
+final.mod <- final_wf %>% last_fit(test_split) # using test data
+final.mod %>% collect_metrics()
 
-```{r}
-rf.recipe <- recipe(BodyTemp ~ ., data = train_data)  %>% 
-  step_dummy(all_nominal(), -BodyTemp)
-rf.wflow <- 
-  workflow() %>% 
-  add_model(mod_rf) %>% 
-  add_recipe(rf.recipe)
 
-```
+# residuals
+final.res <- final_fit %>%
+  augment() %>% 
+  select(.pred, BodyTemp) %>%
+  mutate(.resid = BodyTemp - .pred)
 
-```{r}
-set.seed(123)
-plan(multisession)
+# training vs truth
+final.pred <- ggplot(final.res, aes(x = BodyTemp, y = .pred)) + 
+  geom_point()
+final_pred_plot
 
-fit_rf <- fit_resamples(
-  rf.wflow,
-  resamples = folds,
-  metrics = metric_set(rmse, rsq),
-  control = control_resamples(verbose = TRUE,
-                              save_pred = TRUE,
-                              extract = function(x) x)
-)
+# residuals vs trth
+final_resid_plot <- ggplot(final_resid, aes(y = .resid, x = .pred)) + 
+  geom_point() 
+final_resid_plot 
 
-```
-library(future)
-
+#compare to null model
 
 ```
